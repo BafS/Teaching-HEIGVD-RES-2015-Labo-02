@@ -1,4 +1,3 @@
-//v1
 package ch.heigvd.res.labs.roulette.net.client;
 
 import ch.heigvd.res.labs.roulette.data.EmptyStoreException;
@@ -11,120 +10,129 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import java.util.LinkedList;
+
 /**
- * This class implements the client side of the protocol specification (version
- * 1).
- *
- * @author Olivier Liechti
+ * This class implements the client side of the protocol specification (version 1).
+ * 
+ * @author Olivier Liechti, Henrik Akesson
  */
 public class RouletteV1ClientImpl implements IRouletteV1Client {
 
-    private static final Logger LOG = Logger.getLogger(RouletteV1ClientImpl.class.getName());
-    private Socket sock = null;
-    protected PrintWriter out;
-    protected BufferedReader in;
+  private static final Logger LOG = Logger.getLogger(RouletteV1ClientImpl.class.getName());
 
-    public Logger getLogger(){
-        return LOG;
-    }
-    @Override
+  private Socket sock = null;
+  private BufferedReader in = null;
+  protected PrintWriter out = null;
+  
+  protected String readLine() throws IOException {
+      String line;
+      do {
+          line = in.readLine();
+      } while (line.equalsIgnoreCase("Hello. Online HELP is available. Will you find it?") 
+            || line.equalsIgnoreCase("Huh? please use HELP if you don't know what commands are available."));
+      return line;
+  }
+  
+  @Override
     public void connect(String server, int port) throws IOException {
-
-        // Force to connect to a new server
         if (isConnected()) {
-            disconnect();
+            throw new IOException();
         }
 
-        sock = new Socket(server, port);
-        out = new PrintWriter(sock.getOutputStream(), true);
+        sock = new Socket();
+        sock.connect(new InetSocketAddress(server, port));
         in = new BufferedReader(new InputStreamReader(sock.getInputStream()));
+        out = new PrintWriter(sock.getOutputStream());
     }
+    
 
-    @Override
+  @Override
     public void disconnect() throws IOException {
-        sock.shutdownInput();
-        sock.shutdownOutput();
+        if (!isConnected()) {
+            throw new IOException();
+        }
+
+        out.println(RouletteV1Protocol.CMD_BYE);
+        out.flush();
+
+        in.close();
+        out.close();
         sock.close();
     }
 
-    @Override
-    public boolean isConnected() {
-        if (sock == null) {
-            return false;
-        } else {
-            return sock.isConnected();
-        }
-    }
+  @Override
+  public boolean isConnected() {
+      if (sock == null) {
+         return false; 
+      } else {
+          return sock.isConnected() && !sock.isClosed();
+      }
+  }
 
-    @Override
-    public void loadStudent(String fullname) throws IOException {
+  @Override
+  public void loadStudent(String fullname) throws IOException {
+      List<Student> list = new ArrayList<Student>();
+      list.add(new Student(fullname));
+      loadStudents(list);
+  }
 
-        if (!isConnected()) {
-            return;
-        }
-
-        out.write(RouletteV1Protocol.CMD_LOAD);
-        out.flush();
-        out.write(fullname);
-        out.flush();
-    }
-
-    @Override
+  @Override
     public void loadStudents(List<Student> students) throws IOException {
-
-        if (!isConnected()) {
-            return;
-        }
-
-        for (Student student : students) {
-            out.write(student.getFullname());
-            out.flush();
-        }
-
-        out.write(RouletteV1Protocol.CMD_LOAD_ENDOFDATA_MARKER);
+        out.println(RouletteV1Protocol.CMD_LOAD);
         out.flush();
+
+        if (!readLine().equalsIgnoreCase(RouletteV1Protocol.RESPONSE_LOAD_START)) {
+            throw new IOException();
+        }
+
+        for (Student s : students) {
+            out.println(s.getFullname());
+        }
+
+        out.println(RouletteV1Protocol.CMD_LOAD_ENDOFDATA_MARKER);
+        out.flush();
+
+        readLine();
     }
 
-    @Override
+  @Override
     public Student pickRandomStudent() throws EmptyStoreException, IOException {
-
-        out.write(RouletteV1Protocol.CMD_RANDOM);
+        out.println(RouletteV1Protocol.CMD_RANDOM);
         out.flush();
 
-        Student parseJson;
-        parseJson = JsonObjectMapper.parseJson(in.readLine(), Student.class);
-        return new Student(parseJson.getFullname());
+        RandomCommandResponse response = JsonObjectMapper.parseJson(readLine(), RandomCommandResponse.class);
+        if (response.getError() != null) {
+            throw new EmptyStoreException();
+        }
+
+        return new Student(response.getFullname());
     }
 
-    @Override
-    public int getNumberOfStudents() throws IOException {
-        out.write(RouletteV1Protocol.CMD_INFO);
-        out.flush();
+  @Override
+  public int getNumberOfStudents() throws IOException {
+      out.println(RouletteV1Protocol.CMD_INFO);
+      out.flush();
 
-        InfoCommandResponse parseJson;
-        parseJson = JsonObjectMapper.parseJson(in.readLine(), InfoCommandResponse.class);
-        return parseJson.getNumberOfStudents();
-    }
+      InfoCommandResponse icr = JsonObjectMapper.parseJson(readLine(), InfoCommandResponse.class);
+      return icr.getNumberOfStudents();
+  }
 
-    @Override
-    public String getProtocolVersion() throws IOException {
-        out.write(RouletteV1Protocol.CMD_INFO);
-        out.flush();
+  @Override
+  public String getProtocolVersion() throws IOException {
+      out.println(RouletteV1Protocol.CMD_INFO);
+      out.flush();
 
-        InfoCommandResponse parseJson;
-        parseJson = JsonObjectMapper.parseJson(in.readLine(), InfoCommandResponse.class);
-        return parseJson.getProtocolVersion();
-    }
-        protected String readMessage() throws IOException {
-        String line = null;
-        do {
-            line = in.readLine();
-        } while (line == null);
-        return line;
-    }
+      InfoCommandResponse icr = JsonObjectMapper.parseJson(readLine(), InfoCommandResponse.class);
+      return icr.getProtocolVersion();
+  }
+
+
+
 }
